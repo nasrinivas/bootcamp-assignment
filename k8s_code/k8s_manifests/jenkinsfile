@@ -1,0 +1,62 @@
+
+pipeline {
+    agent any
+    
+    stages {
+        stage('Clone Code') {
+            steps {
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/nasrinivas/k8s.git'
+            }
+        }
+         stage('Build Docker Images') {
+            steps {
+                dir('/var/lib/jenkins/workspace/test/frontend') {
+                   script {
+                       sh 'docker build -t nasrinivas/frontend:$BUILD_NUMBER .'
+                    }
+                }
+                dir('/var/lib/jenkins/workspace/test/backend') {
+                   script {
+                       sh 'docker build -t nasrinivas/backend:$BUILD_NUMBER .'
+                    }
+                }
+            }
+        }
+        
+        stage('Push Images to Docker Hub') {
+            steps {
+                // Log in to Docker Hub
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                          sh 'docker push nasrinivas/frontend:$BUILD_NUMBER'
+                          sh 'docker push nasrinivas/backend:$BUILD_NUMBER'
+                    }
+                }
+            }
+        }
+        stage('Update Kubernetes Manifests') {
+            steps {
+                dir('/var/lib/jenkins/workspace/test/k8s_manifests') {
+                // Update Kubernetes deployment manifest with the latest image tag
+                   script {
+                         sh 'sed -i "s|image: nasrinivas/frontend:12|image: nasrinivas/frontend:$BUILD_NUMBER|g" frontend.yaml'
+                         sh 'sed -i "s|image: nasrinivas/backend:12|image: nasrinivas/backend:$BUILD_NUMBER|g" backend.yaml'
+                   }
+                }
+            }
+        }
+        stage('Deploy to EKS') {
+            steps {
+                dir('/var/lib/jenkins/workspace/test/k8s_manifests') {
+                    withKubeConfig(caCertificate: '', clusterName: 'eks-my', contextName: '', credentialsId: 'token-k8', namespace: 'srinu', restrictKubeConfigAccess: false, serverUrl: 'https://39C04CB33BAA5463437163A17F2139F7.gr7.ap-southeast-2.eks.amazonaws.com')  {
+                    sh "kubectl apply -f db.yaml"
+                    sh "kubectl apply -f backend.yaml"
+                    sh "kubectl apply -f frontend.yaml"
+                   }
+                }    
+                
+            }
+        }
+        
+    }
+}
